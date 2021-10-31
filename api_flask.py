@@ -28,7 +28,7 @@ def create_model():
     except KeyError:
         abort(Response("Please, check correct param 'model_name' "))
     my_models.create_model(**request.json)
-    return 'Success'
+    return 'DONE!'
 
 
 @app.route("/api/get_model", methods=['GET'])
@@ -53,7 +53,7 @@ def update_model():
     'model_name' - наименование модели
     """
     my_models.update_model(request.json)
-    return 'Success'
+    return 'DONE!'
 
 
 @app.route("/api/delete_model/<int:model_id>", methods=['DELETE'])
@@ -62,7 +62,7 @@ def delete_model(model_id):
     Удаление модели с указанным id
     """
     my_models.delete_model(model_id)
-    return 'Success'
+    return 'DONE!'
 
 
 @app.route("/api/fit/<int:model_id>", methods=['PUT'])
@@ -71,7 +71,7 @@ def fit(model_id):
     Обучение модели
     """
     my_models.fit(model_id, **request.json)
-    return 'Success'
+    return 'DONE!'
 
 
 @app.route("/api/predict/<int:model_id>", methods=['GET', 'PUT'])

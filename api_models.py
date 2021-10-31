@@ -11,7 +11,7 @@ from catboost import CatBoostClassifier, CatBoostRegressor
 
 from sklearn.metrics import roc_auc_score, r2_score, f1_score
 
-from typing import List, Tuple, Dict, Union, Any
+from typing import Tuple, Dict, Union, Any
 
 metrics_dict = {'regression': r2_score,
                 'binary': roc_auc_score,
@@ -30,15 +30,15 @@ class ML_models:
         self.task_type = None
         self.available_models = defaultdict()
 
-    def _get_task_type(self, target: dict, cutoff: int = 10) -> None:
+    def _get_task_type(self, data: dict, cutoff: int = 10) -> None:
         """
         Автоматически определяет тип мл-задачи
 
-        target: наш массив с целевой переменной
+        data: обучающая выборка у которой целевая переменная называется -> "target"
         cutoff: порог отсечения для определения задачи регрессии
         """
-        if not isinstance(target, DataFrame):
-            target = pd.DataFrame(target)
+
+        target = pd.DataFrame(data)[['target']]
 
         if target.nunique()[0] == 2:
             self.task_type = 'binary'
@@ -52,33 +52,36 @@ class ML_models:
         Определяет тип задачи и выводит доступные модели
         """
         self._get_task_type(target)
-        print(f"Your task type -> {self.task_type}")
         self.available_models[self.task_type] = {md.__name__: md for md in models_dict[self.task_type]}
         to_print = [md.__name__ for md in models_dict[self.task_type]]
-        return f'  Available models for current task: {to_print}'
+        return f"Current task '{self.task_type}':\n    Available models: {to_print}"
 
-    def create_model(self, model_name: str = '', **kwargs):
+    def create_model(self, model_name: str = '', **kwargs) -> Dict:
         """
         model_name: название модели, которое выбирает пользователь
         dataset_name: наименование датасета
 
         return: {
-                'model_id' - id модели,
-                'model_name' - название модели
-                'task_type' -  тип задачи (определяется автоматически),
-                'model' - обученная в дальнейшем модель,
-                'scores' - метрика качества,
+            'model_id' - id модели,
+            'model_name' - название модели
+            'task_type' -  тип задачи (определяется автоматически),
+            'model' - обученная в дальнейшем модель,
+            'scores' - метрика качества,
         }
         """
         self.counter += 1
-        ml_dic = {'model_id': self.counter,
-                  'model_name': None,
-                  'task_type': self.task_type,
-                  'model': 'Not fitted',
-                  'scores': {}}
+        ml_dic = {
+            'model_id': self.counter,
+            'model_name': None,
+            'task_type': self.task_type,
+            'model': 'Not fitted',
+            'scores': {},
+        }
 
-        fitted = {'model_id': self.counter,
-                  'model': 'Not fitted'}
+        fitted = {
+            'model_id': self.counter,
+            'model': 'Not fitted',
+        }
 
         if model_name in self.available_models[self.task_type]:
             ml_dic['model_name'] = model_name
@@ -98,7 +101,7 @@ class ML_models:
                 return model
         abort(Response('ml model {} doesnt exist'.format(model_id)))
 
-    def _get_fitted_model(self, model_id: int) -> Dict:
+    def get_fitted_model(self, model_id: int) -> Dict:
         """
         model_id: id модели
         """
@@ -123,117 +126,98 @@ class ML_models:
         model_id: id модели, которую хотим удалить
         """
         model = self.get_model(model_id)
-        fitted_model = self._get_fitted_model(model_id)
+        fitted_model = self.get_fitted_model(model_id)
         self.fitted_models.remove(fitted_model)
         self.models.remove(model)
 
     @staticmethod
-    def _transform_data(X, target) -> Tuple[DataFrame, Union[DataFrame, Any]]:
+    def _get_dataframe(data: dict) -> Tuple[DataFrame, Union[DataFrame, Any]]:
         """
-        X: Обучающая выборка,
-        target: Целевая переменная,
+        data: Обучающая выборка, вместе с таргетом
         """
-        if not isinstance(X, pd.DataFrame):
-            X = pd.DataFrame(X)
-
-        if not isinstance(target, pd.DataFrame):
-            target = pd.DataFrame(target)
+        X = pd.DataFrame(data).drop(columns='target')
+        target = pd.DataFrame(data)[['target']]
 
         return X, target
 
-    def fit(self, model_id, X, y, **kwargs) -> Dict:
+    def fit(self, model_id, data, **kwargs) -> Dict:
         """
         model_id: id модели,
-        X: Обучающая выборка,
-        target: Целевая переменная,
+        data: Обучающая выборка, с таргетом
         """
-        X, y = self._transform_data(X, y)
+        X, y = self._get_dataframe(data)
 
-        model_dic = self.get_model(model_id)
-        fitted_model = self._get_fitted_model(model_id)
+        model_dict = self.get_model(model_id)
+        fitted_model = self.get_fitted_model(model_id)
 
         if self.task_type == 'multiclass':
             params = {'random_state': 1488, 'loss_function': 'MultiClass'}
-            algo = self.available_models[self.task_type][model_dic['model_name']](**params)
+            algo = self.available_models[self.task_type][model_dict['model_name']](**params)
         else:
             params = {'random_state': 1488}
-            algo = self.available_models[self.task_type][model_dic['model_name']](**params)
+            algo = self.available_models[self.task_type][model_dict['model_name']](**params)
 
-        try:
-            algo.fit(X, y)
-        except ValueError as error:
-            abort(Response(f'{error}'))
+        algo.fit(X, y)
 
-        model_dic['model'] = 'Fitted'
+        model_dict['model'] = 'Fitted'
         fitted_model['model'] = algo
-        return model_dic
+        return model_dict
 
-    def predict(self, model_id, X, to_json: bool = True, **kwargs) -> Union[DataFrame, Any]:
+    def predict(self, model_id, X, to_dict: bool = True, **kwargs) -> Union[DataFrame, Any]:
         """
         model_id: id модели,
-        X: выборка для предсказания,
+        X: выборка для предсказания, без таргета
         to_json: завернуть ли предсказания в json формат
         """
         X = pd.DataFrame(X)
         _ = self.get_model(model_id)
-        fitted_model = self._get_fitted_model(model_id)
+        fitted_model = self.get_fitted_model(model_id)
         model = fitted_model['model']
 
-        try:
-            predict = model.predict(X)
-        except AttributeError:
-            abort(Response('Model not fitted yet, pleas use model.fit(..), before model.predict(..)'))
+        predict = model.predict(X)
 
-        if to_json:
-            return pd.DataFrame(predict).to_json()
+        if to_dict:
+            return pd.DataFrame(predict).to_dict()
         return predict
 
-    def predict_proba(self, model_id, X, to_json: bool = True, **kwargs) -> Union[DataFrame, Any]:
+    def predict_proba(self, model_id, X, to_dict: bool = True, **kwargs) -> Union[DataFrame, Any]:
         """
         model_id: id модели,
-        X: выборка для предсказания,
+        X: выборка для предсказания, без таргета
         to_json: завернуть ли предсказания в json формат
         """
         X = pd.DataFrame(X)
-        fitted_model = self._get_fitted_model(model_id)
+        fitted_model = self.get_fitted_model(model_id)
         model = fitted_model['model']
         try:
             if self.task_type == 'multiclass':
-                try:
-                    model_scores = model.predict_proba(X)
-                except AttributeError:
-                    abort(Response('Model not fitted yet, pleas use model.fit(..), before model.predict_proba(..)'))
+                model_scores = model.predict_proba(X)
             elif self.task_type == 'binary':
-                try:
-                    model_scores = model.predict_proba(X)[:, 1]
-                except AttributeError:
-                    abort(Response('Model not fitted yet, pleas use model.fit(..), before model.predict_proba(..)'))
+                model_scores = model.predict_proba(X)[:, 1]
         except AttributeError:
             abort(Response(f'Models with task_type {self.task_type} has no method predict_proba'))
 
-        if to_json:
-            return pd.DataFrame(model_scores).to_json()
+        if to_dict:
+            return pd.DataFrame(model_scores).to_dict()
         return model_scores
 
-    def get_scores(self, model_id, X, y, **kwargs) -> Dict:
+    def get_scores(self, model_id, data, **kwargs) -> Dict:
         """
         model_id: id модели,
-        X: выборка для предсказания,
-        y: истинные значения для посчета метрики качества
+        data: выборка для предсказания, c целевой переменной
         """
-        model_dic = self.get_model(model_id)
+        if data is None:
+            abort(Response('LOL! For compute metric needs data!'))
 
-        X, y = self._transform_data(X, y)
+        model_dict = self.get_model(model_id)
 
-        if X is None and y is None:
-            abort(Response('For prediction needs X and y data!'))
+        X, y = self._get_dataframe(data)
 
         if self.task_type != 'regression':
-            y_predicted = self.predict_proba(model_id, X, to_json=False)
+            y_predicted = self.predict_proba(model_id, X, to_dict=False)
         else:
-            y_predicted = self.predict(model_id, X, to_json=False)
+            y_predicted = self.predict(model_id, X, to_dict=False)
 
         metrics = metrics_dict[self.task_type](y, y_predicted)
-        print(f"Models metrics {metrics_dict[self.task_type].__name__} = {metrics}")
-        model_dic['scores'] = metrics
-        return model_dic
+        model_dict['scores'] = {metrics_dict[self.task_type].__name__: metrics}
+        return model_dict
